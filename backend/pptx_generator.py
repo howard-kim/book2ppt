@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Dict, List
 
 from pptx import Presentation
+from pptx.opc.constants import RELATIONSHIP_TYPE as RT
 from pptx.oxml.ns import qn
 
 _FIELDS = ["passage", "q1", "q2", "mission", "syntax"]
@@ -60,9 +61,48 @@ def _clone_slide(prs: Presentation, source) -> object:
     sp_tree = new_slide.shapes._spTree
     for elem in list(sp_tree):
         sp_tree.remove(elem)
+    rel_map = _clone_slide_relationships(source.part, new_slide.part)
     for elem in source.shapes._spTree:
-        sp_tree.append(copy.deepcopy(elem))
+        cloned = copy.deepcopy(elem)
+        _rewrite_rel_ids(cloned, rel_map)
+        sp_tree.append(cloned)
     return new_slide
+
+
+def _clone_slide_relationships(source_part, target_part) -> dict[str, str]:
+    """
+    Clone non-layout relationships so copied shapes keep working.
+
+    Slide XML can reference images and hyperlinks by rId. If we deep-copy only the
+    shape XML, those references point to relationships that don't exist on the new
+    slide, which breaks embedded SVG/image assets.
+    """
+    rel_map: dict[str, str] = {}
+
+    for rel in source_part.rels.values():
+        if rel.reltype == RT.SLIDE_LAYOUT:
+            continue
+
+        if rel.is_external:
+            new_rid = target_part.relate_to(rel.target_ref, rel.reltype, is_external=True)
+        else:
+            new_rid = target_part.relate_to(rel.target_part, rel.reltype)
+
+        rel_map[rel.rId] = new_rid
+
+    return rel_map
+
+
+def _rewrite_rel_ids(shape_xml, rel_map: dict[str, str]) -> None:
+    """Rewrite relationship ids in copied shape XML to match the new slide."""
+    rel_ns = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+
+    for elem in shape_xml.iter():
+        for attr_name, attr_value in list(elem.attrib.items()):
+            if not attr_name.startswith(f"{{{rel_ns}}}"):
+                continue
+            if attr_value in rel_map:
+                elem.set(attr_name, rel_map[attr_value])
 
 
 def _set_text(slide, box_name: str, text: str) -> None:
