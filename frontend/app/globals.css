@@ -1,0 +1,142 @@
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: #f5f5f7;
+  color: #1d1d1f;
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.card {
+  background: #fff;
+  border-radius: 20px;
+  padding: 48px 40px;
+  width: 100%;
+  max-width: 520px;
+  box-shadow: 0 4px 24px rgba(0,0,0,0.08);
+  text-align: center;
+}
+
+h1 {
+  font-size: 1.6rem;
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+
+.subtitle {
+  font-size: 0.95rem;
+  color: #6e6e73;
+  margin-bottom: 32px;
+}
+
+/* ── Drop zone ── */
+.dropzone {
+  border: 2px dashed #d1d1d6;
+  border-radius: 14px;
+  padding: 40px 24px;
+  cursor: pointer;
+  transition: border-color 0.2s, background 0.2s;
+  background: #fafafa;
+  margin-bottom: 24px;
+}
+.dropzone:hover,
+.dropzone.active {
+  border-color: #0071e3;
+  background: #f0f6ff;
+}
+.dropzone.has-file {
+  border-color: #34c759;
+  background: #f0fff4;
+}
+
+.drop-icon {
+  font-size: 2.4rem;
+  margin-bottom: 10px;
+}
+
+.drop-label {
+  font-size: 1rem;
+  font-weight: 600;
+  color: #1d1d1f;
+  margin-bottom: 4px;
+}
+
+.drop-hint {
+  font-size: 0.82rem;
+  color: #8e8e93;
+}
+
+.filename {
+  margin-top: 8px;
+  font-size: 0.88rem;
+  color: #0071e3;
+  font-weight: 500;
+  word-break: break-all;
+}
+
+/* ── Button ── */
+.btn {
+  width: 100%;
+  padding: 14px;
+  border: none;
+  border-radius: 12px;
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.15s, transform 0.1s;
+}
+.btn:active { transform: scale(0.98); }
+.btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.btn-primary {
+  background: #0071e3;
+  color: #fff;
+}
+.btn-primary:hover:not(:disabled) { background: #0077ed; }
+
+.btn-success {
+  background: #34c759;
+  color: #fff;
+  margin-top: 12px;
+  text-decoration: none;
+  display: block;
+  line-height: 1;
+  padding: 14px;
+  border-radius: 12px;
+  font-size: 1rem;
+  font-weight: 600;
+}
+.btn-success:hover { background: #30b350; }
+
+/* ── States ── */
+.status-bar {
+  margin-top: 20px;
+  padding: 12px 16px;
+  border-radius: 10px;
+  font-size: 0.9rem;
+  font-weight: 500;
+}
+.status-converting {
+  background: #fff8e1;
+  color: #b45309;
+}
+.status-error {
+  background: #fff0f0;
+  color: #d93025;
+}
+
+.spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid #b45309;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  vertical-align: middle;
+  margin-right: 6px;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
