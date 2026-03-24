@@ -7,6 +7,7 @@ Deploy on Railway / Render / Fly.io.
 Place your template.pptx in the same directory as this file.
 """
 
+import os
 from pathlib import Path
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
@@ -21,10 +22,25 @@ import tempfile
 # ---------------------------------------------------------------------------
 app = FastAPI(title="IDML → PPTX Converter")
 
+
+def get_allowed_origins() -> list[str]:
+    """
+    Read CORS origins from ALLOWED_ORIGINS.
+
+    Example:
+    ALLOWED_ORIGINS=https://my-frontend.app,https://www.my-frontend.app
+    """
+    raw = os.getenv("ALLOWED_ORIGINS", "*").strip()
+    if not raw:
+        return ["*"]
+    if raw == "*":
+        return ["*"]
+    return [origin.strip() for origin in raw.split(",") if origin.strip()]
+
 # CORS: allow Vercel frontend (configure ALLOWED_ORIGINS in production)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],   # tighten to your Vercel URL before going live
+    allow_origins=get_allowed_origins(),
     allow_methods=["POST", "GET"],
     allow_headers=["*"],
 )
@@ -69,11 +85,14 @@ async def convert(file: UploadFile = File(...)):
             data = parse_idml(str(idml_path))
             generate_ppt(data, str(TEMPLATE_PATH), str(output_path))
         except Exception as e:
+            import traceback; traceback.print_exc()
             raise HTTPException(status_code=422, detail=str(e))
 
         pptx_bytes = output_path.read_bytes()
 
     stem = Path(file.filename).stem
+    from urllib.parse import quote
+    encoded_name = quote(f"{stem}.pptx", safe="")
     return Response(
         content=pptx_bytes,
         media_type=(
@@ -81,6 +100,6 @@ async def convert(file: UploadFile = File(...)):
             ".presentationml.presentation"
         ),
         headers={
-            "Content-Disposition": f'attachment; filename="{stem}.pptx"'
+            "Content-Disposition": f"attachment; filename=\"output.pptx\"; filename*=UTF-8''{encoded_name}"
         },
     )

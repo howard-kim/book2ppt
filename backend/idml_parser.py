@@ -16,6 +16,21 @@ from typing import Dict, List, Tuple
 from xml.etree import ElementTree as ET
 
 _IDPKG_NS = "http://ns.adobe.com/AdobeInDesign/idml/1.0/packaging"
+_SPREAD_SEP = "\x00SPREAD\x00"   # sentinel inserted between spreads
+
+_KOREAN_CHAPTER_NAMES = {
+    "첫 문장과 링킹",
+    "배경과 반전",
+    "부분 링킹",
+    "정보 분류",
+    "체화",
+}
+
+_STRUCTURAL_LABELS = {
+    "Logic Note", "CONTENTS", "CONTENTSc",
+    "A", "B", "C", "D", "E",
+    "①", "②", "③", "④", "⑤",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -59,7 +74,13 @@ def _extract_all_paragraphs(idml_path: Path) -> List[str]:
         # Deduplicate: same story can appear multiple times (threaded frames)
         seen: set = set()
         paragraphs: List[str] = []
-        for _, _, _, story_id in frame_order:
+        current_spread = None
+        for spread_idx, _, _, story_id in frame_order:
+            # Insert a sentinel between spreads so the parser never crosses boundaries
+            if spread_idx != current_spread:
+                if current_spread is not None:
+                    paragraphs.append(_SPREAD_SEP)
+                current_spread = spread_idx
             if story_id in seen:
                 continue
             seen.add(story_id)
@@ -101,11 +122,11 @@ def _get_frames_from_spread(
         pt = tf.find(".//PathPointType")
         if pt is not None:
             try:
-                y, x = map(float, pt.get("Anchor", "0 0").split())
+                x, y = map(float, pt.get("Anchor", "0 0").split())
             except ValueError:
-                y, x = 0.0, 0.0
+                x, y = 0.0, 0.0
         else:
-            y, x = 0.0, 0.0
+            x, y = 0.0, 0.0
         frames.append((y, x, story_id))
 
     return frames
@@ -148,23 +169,28 @@ def _parse_story_xml(zf: zipfile.ZipFile, story_file: str) -> List[str]:
 # Step 2: flat paragraphs → structured units (rule-based state machine)
 # ---------------------------------------------------------------------------
 
+def _is_section_marker(text: str) -> bool:
+    return text in ("Mission", "Syntax")
+
+
 def _build_units(paragraphs: List[str]) -> List[Dict[str, str]]:
     units: List[Dict[str, str]] = []
     i = 0
     n = len(paragraphs)
 
     while i < n:
-        # Skip non-content paragraphs until we find a passage start
-        # (i.e. skip anything that looks like a header/label before content)
-        if _is_skip_line(paragraphs[i]):
+        t = paragraphs[i]
+        # Skip separators, structural markers, and skip lines
+        if t == _SPREAD_SEP or _is_skip_line(t) or _is_section_marker(t):
             i += 1
             continue
 
-        print(f"[DEBUG] index={i}  text={paragraphs[i][:60]!r}")
+        print(f"[DEBUG] index={i}  text={t[:60]!r}")
         result = _parse_one_unit(paragraphs, i)
-        units.append(result["data"])
+        if result["data"]["passage"] or result["data"]["q1"]:
+            units.append(result["data"])
+            print(f"[DEBUG] Unit {len(units)} parsed. Next index → {result['next_index']}\n")
         i = result["next_index"]
-        print(f"[DEBUG] Unit {len(units)} parsed. Next index → {i}\n")
 
     return units
 
@@ -174,23 +200,22 @@ def _is_skip_line(text: str) -> bool:
     Return True for lines that are structural labels / decorations,
     not part of content units.
     Skips: page numbers, chapter headers, single characters/numbers,
-           'Logic Note', 'A'/'B' answer labels, circled numbers (①~⑤), etc.
+           'Logic Note', 'A'/'B' answer labels, circled numbers (①~⑤),
+           Korean chapter names, etc.
     """
     t = text.strip()
     if not t:
         return True
-    # Single character (answer labels like A, B, circled numbers)
+    # Single character tokens
     if len(t) == 1:
         return True
-    # Circled numbers ①②③④⑤ or similar
-    if t in ("①", "②", "③", "④", "⑤"):
+    # Known structural labels and Korean chapter titles
+    if t in _STRUCTURAL_LABELS or t in _KOREAN_CHAPTER_NAMES:
         return True
-    # Common structural labels
-    if t in ("Logic Note", "CONTENTS", "CONTENTSc"):
-        return True
-    # Chapter headers like "CHAPTER 1 ...", "01c", "02c" etc.
+    # Chapter headers like "CHAPTER 1 ..."
     if t.lower().startswith("chapter"):
         return True
+    # Codes like "01c", "02c"
     if len(t) <= 4 and t[:-1].isdigit() and t.endswith("c"):
         return True
     # Pure page numbers
@@ -199,7 +224,11 @@ def _is_skip_line(text: str) -> bool:
     return False
 
 
-def _parse_one_unit(paragraphs: List[str], start: int) -> Dict:
+def _parse_one_unit(
+    paragraphs: List[str],
+    start: int,
+    passage_override: "str | None" = None,
+) -> Dict:
     """
     Parse exactly one 5-field unit starting at `start`.
     Returns {"data": {...}, "next_index": int}.
@@ -209,58 +238,78 @@ def _parse_one_unit(paragraphs: List[str], start: int) -> Dict:
     i = start
 
     # ── PASSAGE ────────────────────────────────────────────────────────────
-    passage_lines: List[str] = []
-    while i < n:
-        t = paragraphs[i]
-        if _is_skip_line(t):
+    if passage_override:
+        passage = passage_override
+        print(f"[DEBUG]   → passage injected from previous unit's syntax")
+    else:
+        passage_lines: List[str] = []
+        while i < n:
+            t = paragraphs[i]
+            if _is_skip_line(t):
+                i += 1
+                continue
+            if t.startswith("1.") or t in ("Mission", "Syntax"):
+                break
+            passage_lines.append(t)
             i += 1
-            continue
-        if t.startswith("1.") or t in ("Mission", "Syntax"):
-            break
-        passage_lines.append(t)
-        i += 1
 
-    passage = "\n".join(passage_lines).strip()
-    if not passage:
-        raise Exception(f"[index={start}] Missing PASSAGE before Question 1.")
+        passage = "\n".join(passage_lines).strip()
     print(f"[DEBUG]   → passage detected")
 
-    # ── QUESTION 1 ─────────────────────────────────────────────────────────
-    # skip structural noise between passage and Q1
+    # ── QUESTION 1 (optional) ──────────────────────────────────────────────
     while i < n and _is_skip_line(paragraphs[i]):
         i += 1
-
-    if i >= n or not paragraphs[i].startswith("1."):
-        raise Exception(
-            f"[index={i}] Expected Question 1 ('1.'), got: {paragraphs[i]!r}"
-        )
 
     q1_lines: List[str] = []
-    while i < n:
-        t = paragraphs[i]
-        if _is_skip_line(t):
+    if i < n and paragraphs[i].startswith("1."):
+        while i < n:
+            t = paragraphs[i]
+            if _is_skip_line(t):
+                i += 1
+                continue
+            if t.startswith("2.") or t in ("Mission", "Syntax"):
+                break
+            q1_lines.append(t)
             i += 1
-            continue
-        if t.startswith("2.") or t in ("Mission", "Syntax"):
-            break
-        q1_lines.append(t)
-        i += 1
 
     q1 = "\n".join(q1_lines).strip()
-    if not q1:
-        raise Exception(f"[index={i}] Missing content for Question 1.")
     print(f"[DEBUG]   → q1 detected")
 
-    # ── QUESTION 2 ─────────────────────────────────────────────────────────
+    # ── QUESTION 2 (optional) ───────────────────────────────────────────────
+    # Stop Q2 after answer choices: once we've seen ①②③④⑤ lines,
+    # the next plain-prose paragraph is Syntax content (not part of Q2).
     while i < n and _is_skip_line(paragraphs[i]):
         i += 1
 
-    if i >= n or not paragraphs[i].startswith("2."):
-        raise Exception(
-            f"[index={i}] Expected Question 2 ('2.'), got: {paragraphs[i]!r}"
-        )
+    _CHOICE_CHARS = set("①②③④⑤")
 
     q2_lines: List[str] = []
+    if i < n and paragraphs[i].startswith("2."):
+        has_choices = False
+        while i < n:
+            t = paragraphs[i]
+            if _is_skip_line(t):
+                i += 1
+                continue
+            if t in ("Mission", "Syntax"):
+                break
+            if t.startswith("1.") and q2_lines:
+                break
+            # After seeing answer choices, stop at the next prose paragraph
+            if has_choices and (not t or t[0] not in _CHOICE_CHARS):
+                break
+            if t and t[0] in _CHOICE_CHARS:
+                has_choices = True
+            q2_lines.append(t)
+            i += 1
+
+    q2 = "\n".join(q2_lines).strip()
+    print(f"[DEBUG]   → q2 detected")
+
+    # ── SYNTAX + MISSION content ────────────────────────────────────────────
+    # After Q2 answer choices, the next paragraphs (before Mission/Syntax labels)
+    # are: [0] = Syntax content, [1] = Mission content.
+    pre_label: List[str] = []
     while i < n:
         t = paragraphs[i]
         if _is_skip_line(t):
@@ -268,64 +317,23 @@ def _parse_one_unit(paragraphs: List[str], start: int) -> Dict:
             continue
         if t in ("Mission", "Syntax"):
             break
-        if t.startswith("1.") and q2_lines:
+        if t.startswith("1."):
             break
-        q2_lines.append(t)
+        pre_label.append(t)
         i += 1
 
-    q2 = "\n".join(q2_lines).strip()
-    if not q2:
-        raise Exception(f"[index={i}] Missing content for Question 2.")
-    print(f"[DEBUG]   → q2 detected")
+    syntax  = pre_label[0] if len(pre_label) > 0 else ""
+    mission = "\n".join(pre_label[1:]) if len(pre_label) > 1 else ""
+    print(f"[DEBUG]   → mission: {mission[:60]!r}")
+    print(f"[DEBUG]   → syntax:  {syntax[:60]!r}")
 
-    # ── MISSION ────────────────────────────────────────────────────────────
-    while i < n and _is_skip_line(paragraphs[i]):
-        i += 1
-
-    if i >= n or paragraphs[i] != "Mission":
-        raise Exception(
-            f"[index={i}] Expected 'Mission', got: {paragraphs[i]!r}"
-        )
-    i += 1
-
-    mission_lines: List[str] = []
+    # ── Skip Mission / Syntax labels and trailing decorations ───────────────
     while i < n:
         t = paragraphs[i]
-        if _is_skip_line(t):
+        if _is_skip_line(t) or t in ("Mission", "Syntax"):
             i += 1
             continue
-        if t == "Syntax":
-            break
-        mission_lines.append(t)
-        i += 1
-
-    mission = "\n".join(mission_lines).strip()
-    if not mission:
-        raise Exception(f"[index={i}] Missing content for Mission.")
-    print(f"[DEBUG]   → mission detected")
-
-    # ── SYNTAX ─────────────────────────────────────────────────────────────
-    while i < n and _is_skip_line(paragraphs[i]):
-        i += 1
-
-    if i >= n or paragraphs[i] != "Syntax":
-        raise Exception(
-            f"[index={i}] Expected 'Syntax', got: {paragraphs[i]!r}"
-        )
-    i += 1
-
-    while i < n and _is_skip_line(paragraphs[i]):
-        i += 1
-
-    if i >= n:
-        raise Exception(f"[index={i}] Missing content after 'Syntax'.")
-
-    syntax = paragraphs[i].strip()
-    i += 1
-
-    if not syntax:
-        raise Exception(f"[index={i-1}] Syntax content is empty.")
-    print(f"[DEBUG]   → syntax detected")
+        break  # hit next unit's passage or Q1
 
     return {
         "data": {
