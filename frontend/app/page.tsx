@@ -4,7 +4,8 @@ import { useCallback, useRef, useState } from "react";
 
 type Status = "idle" | "converting" | "done" | "error";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+// const API_URL = process.env.NEXT_PUBLIC_API_URL;
+const API_URL = "http://localhost:8000";
 
 export default function Home() {
   const [file, setFile] = useState<File | null>(null);
@@ -45,6 +46,12 @@ export default function Home() {
     if (!file) return;
     setStatus("converting");
     setErrorMsg("");
+
+    if (!API_URL) {
+      setErrorMsg("NEXT_PUBLIC_API_URL is not configured.");
+      setStatus("error");
+      return;
+    }
 
     const form = new FormData();
     form.append("file", file);
