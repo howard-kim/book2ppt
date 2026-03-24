@@ -4,8 +4,7 @@ import { useCallback, useRef, useState } from "react";
 
 type Status = "idle" | "converting" | "done" | "error";
 
-// const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'
-const API_URL = process.env.RAILWAY;
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 export default function Home() {
   const [file, setFile] = useState<File | null>(null);

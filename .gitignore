@@ -4,3 +4,4 @@ frontend/.next/
 backend/__pycache__/
 backend/*.pyc
 backend/~$template.pptx
+frontend/.env.local
